@@ -1,132 +1,91 @@
 import axios from 'axios';
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const messagesDB = new Map();
 
-// Глобальная переменная для хранения сообщений между запросами
+// Используем глобальную переменную для хранения между cold starts
 global.messagesDB = global.messagesDB || new Map();
 
 export default async function handler(req, res) {
-  // Используем глобальную переменную чтобы сохранять данные между cold starts
   const messagesDB = global.messagesDB;
+  
+  console.log('=== WEBHOOK CALLED ===');
+  console.log('Method:', req.method);
+  console.log('URL:', req.url);
 
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Credentials', true);
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
+    return res.status(200).end();
   }
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // Логируем ВСЕ что приходит
+  console.log('📦 RAW BODY:', JSON.stringify(req.body));
+  console.log('📦 BODY TYPE:', typeof req.body);
+  
   try {
-    console.log('🔄 ===== WEBHOOK START =====');
-    console.log('📦 Request method:', req.method);
-    console.log('📦 Request URL:', req.url);
+    const update = req.body;
+    console.log('🔄 Update received:', update);
     
-    // Логируем тело запроса по частям
-    const body = req.body;
-    console.log('📦 Body type:', typeof body);
-    console.log('📦 Body keys:', Object.keys(body || {}));
-    
-    if (body && typeof body === 'object') {
-      console.log('📦 Body message type:', body.message ? typeof body.message : 'no message');
-      console.log('📦 Body message keys:', body.message ? Object.keys(body.message) : 'no message');
-      
-      if (body.message && body.message.text) {
-        console.log('💬 Message text found:', body.message.text);
-        console.log('👤 From:', body.message.from?.username || body.message.from?.id);
-        console.log('💬 Chat ID:', body.message.chat?.id);
+    if (update && update.message) {
+      const message = update.message;
+      console.log('💬 Message text:', message.text);
+      console.log('👤 From:', message.from?.username || message.from?.id);
+      console.log('💬 Chat:', message.chat?.id);
+
+      // ПРОСТАЯ обработка команды reply
+      if (message.text && message.text.includes('reply')) {
+        console.log('🎯 REPLY COMMAND FOUND');
         
-        // Обработка команды /reply
-        if (body.message.text.startsWith('/reply')) {
-          console.log('🎯 REPLY COMMAND DETECTED');
+        // Простая логика - ищем visitor_ в тексте
+        const visitorMatch = message.text.match(/visitor_[a-z0-9]+/);
+        if (visitorMatch) {
+          const visitorId = visitorMatch[0];
+          console.log('🎯 Found visitorId:', visitorId);
           
-          const parts = body.message.text.split(' ');
-          console.log('📋 Command parts:', parts);
+          // Извлекаем текст ответа (все после visitorId)
+          const replyStart = message.text.indexOf(visitorId) + visitorId.length;
+          const replyText = message.text.substring(replyStart).trim();
+          console.log('🎯 Reply text:', replyText);
           
-          let visitorId, replyText;
-          
-          if (parts[0].startsWith('/reply_')) {
-            visitorId = parts[0].replace('/reply_', '');
-            replyText = parts.slice(1).join(' ');
-          } else if (parts[0] === '/reply' && parts[1]) {
-            visitorId = parts[1];
-            replyText = parts.slice(2).join(' ');
-          }
-          
-          console.log('🎯 Parsed visitorId:', visitorId);
-          console.log('🎯 Parsed replyText:', replyText);
-          
-          if (visitorId && replyText) {
-            console.log('💾 Saving message for visitor:', visitorId);
-            
+          if (replyText) {
+            // Сохраняем сообщение
             if (!messagesDB.has(visitorId)) {
               messagesDB.set(visitorId, []);
-              console.log('📝 Created new array for visitor:', visitorId);
             }
             
-            const newMessage = {
+            messagesDB.get(visitorId).push({
               id: Date.now(),
               text: replyText,
-              sender: 'operator', 
-              timestamp: new Date().toISOString(),
-              displayed: false
-            };
-            
-            messagesDB.get(visitorId).push(newMessage);
-            console.log('💾 Message saved successfully');
-            console.log('📊 All messages for visitor:', messagesDB.get(visitorId));
-            
-            // Тестовое сообщение - принудительно добавим
-            const testVisitorId = 'visitor_test123';
-            if (!messagesDB.has(testVisitorId)) {
-              messagesDB.set(testVisitorId, []);
-            }
-            messagesDB.get(testVisitorId).push({
-              id: Date.now(),
-              text: 'ТЕСТОВОЕ СООБЩЕНИЕ ОТ МЕНЕДЖЕРА',
               sender: 'operator',
               timestamp: new Date().toISOString(),
               displayed: false
             });
-            console.log('🧪 TEST: Added test message for visitor_test123');
             
-            // Отправляем подтверждение в Telegram
-            try {
-              await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-                chat_id: body.message.chat.id,
-                text: `✅ Ответ "${replyText}" отправлен посетителю ${visitorId}`
-              });
-              console.log('📤 Confirmation sent to Telegram');
-            } catch (telegramError) {
-              console.error('❌ Telegram error:', telegramError.message);
-            }
-          } else {
-            console.log('❌ Could not parse visitorId or replyText');
+            console.log('💾 Message saved for:', visitorId);
+            console.log('📊 All messages:', Array.from(messagesDB.entries()));
+            
+            // Отправляем подтверждение
+            await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+              chat_id: message.chat.id,
+              text: `✅ Ответ сохранен для ${visitorId}`
+            });
           }
-        } else {
-          console.log('ℹ️ Regular message (not a reply command)');
         }
-      } else {
-        console.log('❌ No message text in request');
       }
-    } else {
-      console.log('❌ No body or invalid body format');
     }
     
-    console.log('✅ ===== WEBHOOK END =====');
-    res.status(200).json({ status: 'OK', received: true });
+    console.log('✅ WEBHOOK COMPLETED');
+    res.status(200).json({ success: true });
     
   } catch (error) {
-    console.error('❌ Webhook error:', error);
-    console.error('❌ Error stack:', error.stack);
-    res.status(500).json({ error: 'Webhook processing failed' });
+    console.error('❌ WEBHOOK ERROR:', error);
+    res.status(500).json({ error: error.message });
   }
 }
