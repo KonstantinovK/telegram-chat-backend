@@ -1,15 +1,15 @@
-const messagesDB = new Map();
+import { getMessages } from './storage.js';
 
 export default async function handler(req, res) {
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Credentials', true);
+  console.log('=== GET-MESSAGES START ===');
+  
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
+    return res.status(200).end();
   }
 
   if (req.method !== 'GET') {
@@ -17,34 +17,38 @@ export default async function handler(req, res) {
   }
 
   const { visitorId } = req.query;
+  console.log('🔍 Getting messages for:', visitorId);
 
   if (!visitorId) {
     return res.status(400).json({ error: 'visitorId is required' });
   }
 
-  console.log('🔍 Getting messages for:', visitorId);
-  console.log('📊 Current messagesDB:', Array.from(messagesDB.entries()));
+  try {
+    const allMessages = getMessages(visitorId);
+    console.log('📦 All messages from storage:', allMessages);
+    
+    // Фильтруем непрочитанные сообщения оператора
+    const operatorMessages = allMessages
+      .filter(msg => msg.sender === 'operator' && !msg.displayed)
+      .map(msg => ({ ...msg, displayed: true }));
+    
+    console.log('📤 Sending operator messages:', operatorMessages);
+    
+    // Обновляем сообщения как прочитанные
+    if (operatorMessages.length > 0) {
+      const updatedMessages = allMessages.map(msg => 
+        operatorMessages.some(om => om.id === msg.id) 
+          ? { ...msg, displayed: true } 
+          : msg
+      );
+      // Сохраняем обновленные сообщения
+      global.chatStorage.messages.set(visitorId, updatedMessages);
+    }
 
-  const messages = messagesDB.get(visitorId) || [];
-  const operatorMessages = messages
-    .filter(msg => msg.sender === 'operator' && !msg.displayed)
-    .map(msg => {
-      const updatedMsg = { ...msg, displayed: true };
-      console.log('📨 Returning message:', updatedMsg);
-      return updatedMsg;
-    });
-
-  // Обновляем сообщения как прочитанные
-  if (operatorMessages.length > 0) {
-    const allMessages = messagesDB.get(visitorId) || [];
-    const updatedMessages = allMessages.map(msg => 
-      operatorMessages.some(om => om.id === msg.id) 
-        ? { ...msg, displayed: true } 
-        : msg
-    );
-    messagesDB.set(visitorId, updatedMessages);
+    res.status(200).json(operatorMessages);
+    
+  } catch (error) {
+    console.error('❌ GET-MESSAGES ERROR:', error);
+    res.status(500).json({ error: error.message });
   }
-
-  console.log('📤 Sending operator messages:', operatorMessages);
-  res.status(200).json(operatorMessages);
 }

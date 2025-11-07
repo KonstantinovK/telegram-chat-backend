@@ -1,17 +1,11 @@
 import axios from 'axios';
+import { addMessage, getStorageStats } from './storage.js';
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
-// Используем глобальную переменную для хранения между cold starts
-global.messagesDB = global.messagesDB || new Map();
-
 export default async function handler(req, res) {
-  const messagesDB = global.messagesDB;
+  console.log('=== WEBHOOK START ===');
   
-  console.log('=== WEBHOOK CALLED ===');
-  console.log('Method:', req.method);
-  console.log('URL:', req.url);
-
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -25,64 +19,47 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Логируем ВСЕ что приходит
-  console.log('📦 RAW BODY:', JSON.stringify(req.body));
-  console.log('📦 BODY TYPE:', typeof req.body);
-  
   try {
     const update = req.body;
-    console.log('🔄 Update received:', update);
+    console.log('📦 Update:', JSON.stringify(update, null, 2));
     
     if (update && update.message) {
       const message = update.message;
-      console.log('💬 Message text:', message.text);
-      console.log('👤 From:', message.from?.username || message.from?.id);
-      console.log('💬 Chat:', message.chat?.id);
+      console.log('💬 Processing message:', message.text);
 
-      // ПРОСТАЯ обработка команды reply
-      if (message.text && message.text.includes('reply')) {
-        console.log('🎯 REPLY COMMAND FOUND');
+      // Обработка команды reply
+      if (message.text && message.text.startsWith('/reply_')) {
+        console.log('🎯 REPLY COMMAND DETECTED');
         
-        // Простая логика - ищем visitor_ в тексте
-        const visitorMatch = message.text.match(/visitor_[a-z0-9]+/);
-        if (visitorMatch) {
-          const visitorId = visitorMatch[0];
-          console.log('🎯 Found visitorId:', visitorId);
+        const parts = message.text.split(' ');
+        const visitorId = parts[0].replace('/reply_', '');
+        const replyText = parts.slice(1).join(' ');
+        
+        console.log('🎯 VisitorId:', visitorId);
+        console.log('🎯 ReplyText:', replyText);
+        
+        if (visitorId && replyText) {
+          // Сохраняем сообщение
+          addMessage(visitorId, {
+            text: replyText,
+            sender: 'operator',
+            displayed: false
+          });
           
-          // Извлекаем текст ответа (все после visitorId)
-          const replyStart = message.text.indexOf(visitorId) + visitorId.length;
-          const replyText = message.text.substring(replyStart).trim();
-          console.log('🎯 Reply text:', replyText);
+          console.log('💾 Message saved successfully');
+          console.log('📊 Storage stats:', getStorageStats());
           
-          if (replyText) {
-            // Сохраняем сообщение
-            if (!messagesDB.has(visitorId)) {
-              messagesDB.set(visitorId, []);
-            }
-            
-            messagesDB.get(visitorId).push({
-              id: Date.now(),
-              text: replyText,
-              sender: 'operator',
-              timestamp: new Date().toISOString(),
-              displayed: false
-            });
-            
-            console.log('💾 Message saved for:', visitorId);
-            console.log('📊 All messages:', Array.from(messagesDB.entries()));
-            
-            // Отправляем подтверждение
-            await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-              chat_id: message.chat.id,
-              text: `✅ Ответ сохранен для ${visitorId}`
-            });
-          }
+          // Отправляем подтверждение
+          await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            chat_id: message.chat.id,
+            text: `✅ Ответ "${replyText}" сохранен для ${visitorId}`
+          });
         }
       }
     }
     
     console.log('✅ WEBHOOK COMPLETED');
-    res.status(200).json({ success: true });
+    res.status(200).json({ success: true, stats: getStorageStats() });
     
   } catch (error) {
     console.error('❌ WEBHOOK ERROR:', error);
