@@ -2,14 +2,30 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/*.js",
+      "src": "api/get-messages.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "api/send-to-telegram.js", 
+      "use": "@vercel/node"
+    },
+    {
+      "src": "api/webhook.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
+      "src": "/api/get-messages",
+      "dest": "/api/get-messages.js"
+    },
+    {
+      "src": "/api/send-to-telegram",
+      "dest": "/api/send-to-telegram.js"
+    },
+    {
+      "src": "/api/webhook",
+      "dest": "/api/webhook.js"
     }
   ]
 }
