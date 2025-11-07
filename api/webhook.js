@@ -3,7 +3,13 @@ import axios from 'axios';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const messagesDB = new Map();
 
+// Глобальная переменная для хранения сообщений между запросами
+global.messagesDB = global.messagesDB || new Map();
+
 export default async function handler(req, res) {
+  // Используем глобальную переменную чтобы сохранять данные между cold starts
+  const messagesDB = global.messagesDB;
+
   // CORS headers
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -21,101 +27,106 @@ export default async function handler(req, res) {
 
   try {
     console.log('🔄 ===== WEBHOOK START =====');
-    console.log('📦 Full request body:', JSON.stringify(req.body, null, 2));
-    console.log('📦 Request headers:', req.headers);
-
-    const update = req.body;
+    console.log('📦 Request method:', req.method);
+    console.log('📦 Request URL:', req.url);
     
-    // Логируем ВСЕ входящие данные
-    if (update.message) {
-      console.log('💬 Message received:');
-      console.log('   From:', update.message.from);
-      console.log('   Chat:', update.message.chat);
-      console.log('   Text:', update.message.text);
-      console.log('   Date:', update.message.date);
-    }
-
-    if (update.edited_message) {
-      console.log('✏️ Edited message:', update.edited_message);
-    }
-
-    if (update.channel_post) {
-      console.log('📢 Channel post:', update.channel_post);
-    }
-
-    const message = update.message;
+    // Логируем тело запроса по частям
+    const body = req.body;
+    console.log('📦 Body type:', typeof body);
+    console.log('📦 Body keys:', Object.keys(body || {}));
     
-    if (message && message.text) {
-      console.log('🎯 Processing message text:', message.text);
-
-      // Обработка команды /reply_visitorId
-      if (message.text.startsWith('/reply')) {
-        console.log('🔧 Command detected:', message.text);
+    if (body && typeof body === 'object') {
+      console.log('📦 Body message type:', body.message ? typeof body.message : 'no message');
+      console.log('📦 Body message keys:', body.message ? Object.keys(body.message) : 'no message');
+      
+      if (body.message && body.message.text) {
+        console.log('💬 Message text found:', body.message.text);
+        console.log('👤 From:', body.message.from?.username || body.message.from?.id);
+        console.log('💬 Chat ID:', body.message.chat?.id);
         
-        const parts = message.text.split(' ');
-        console.log('📋 Command parts:', parts);
-        
-        if (parts.length >= 2) {
+        // Обработка команды /reply
+        if (body.message.text.startsWith('/reply')) {
+          console.log('🎯 REPLY COMMAND DETECTED');
+          
+          const parts = body.message.text.split(' ');
+          console.log('📋 Command parts:', parts);
+          
           let visitorId, replyText;
           
           if (parts[0].startsWith('/reply_')) {
-            // Формат: /reply_visitor123 текст ответа
             visitorId = parts[0].replace('/reply_', '');
             replyText = parts.slice(1).join(' ');
-          } else {
-            // Формат: /reply visitor123 текст ответа
+          } else if (parts[0] === '/reply' && parts[1]) {
             visitorId = parts[1];
             replyText = parts.slice(2).join(' ');
           }
-
-          console.log('🎯 Extracted visitorId:', visitorId);
-          console.log('🎯 Extracted replyText:', replyText);
-
+          
+          console.log('🎯 Parsed visitorId:', visitorId);
+          console.log('🎯 Parsed replyText:', replyText);
+          
           if (visitorId && replyText) {
-            console.log('💾 Saving reply for visitor:', visitorId);
+            console.log('💾 Saving message for visitor:', visitorId);
             
             if (!messagesDB.has(visitorId)) {
               messagesDB.set(visitorId, []);
-              console.log('📝 Created new messages array for visitor:', visitorId);
+              console.log('📝 Created new array for visitor:', visitorId);
             }
-
+            
             const newMessage = {
               id: Date.now(),
               text: replyText,
-              sender: 'operator',
+              sender: 'operator', 
               timestamp: new Date().toISOString(),
               displayed: false
             };
-
+            
             messagesDB.get(visitorId).push(newMessage);
-            console.log('💾 Message saved:', newMessage);
+            console.log('💾 Message saved successfully');
             console.log('📊 All messages for visitor:', messagesDB.get(visitorId));
             
-            // Отправляем подтверждение
-            await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-              chat_id: message.chat.id,
-              text: `✅ Ответ отправлен посетителю ${visitorId}: "${replyText}"`
+            // Тестовое сообщение - принудительно добавим
+            const testVisitorId = 'visitor_test123';
+            if (!messagesDB.has(testVisitorId)) {
+              messagesDB.set(testVisitorId, []);
+            }
+            messagesDB.get(testVisitorId).push({
+              id: Date.now(),
+              text: 'ТЕСТОВОЕ СООБЩЕНИЕ ОТ МЕНЕДЖЕРА',
+              sender: 'operator',
+              timestamp: new Date().toISOString(),
+              displayed: false
             });
-
-            console.log('📤 Confirmation sent to Telegram');
+            console.log('🧪 TEST: Added test message for visitor_test123');
+            
+            // Отправляем подтверждение в Telegram
+            try {
+              await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                chat_id: body.message.chat.id,
+                text: `✅ Ответ "${replyText}" отправлен посетителю ${visitorId}`
+              });
+              console.log('📤 Confirmation sent to Telegram');
+            } catch (telegramError) {
+              console.error('❌ Telegram error:', telegramError.message);
+            }
           } else {
-            console.log('❌ Missing visitorId or replyText');
+            console.log('❌ Could not parse visitorId or replyText');
           }
         } else {
-          console.log('❌ Invalid command format. Usage: /reply_visitorId text OR /reply visitorId text');
+          console.log('ℹ️ Regular message (not a reply command)');
         }
       } else {
-        console.log('ℹ️ Regular message (not a reply command)');
+        console.log('❌ No message text in request');
       }
     } else {
-      console.log('❌ No message text found');
+      console.log('❌ No body or invalid body format');
     }
     
     console.log('✅ ===== WEBHOOK END =====');
-    res.status(200).json({ status: 'OK', processed: true });
+    res.status(200).json({ status: 'OK', received: true });
     
   } catch (error) {
     console.error('❌ Webhook error:', error);
+    console.error('❌ Error stack:', error.stack);
     res.status(500).json({ error: 'Webhook processing failed' });
   }
 }
