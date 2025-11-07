@@ -1,7 +1,6 @@
 import axios from 'axios';
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const messagesDB = new Map();
 
 export default async function handler(req, res) {
@@ -21,12 +20,12 @@ export default async function handler(req, res) {
   }
 
   try {
-    console.log('Webhook received:', JSON.stringify(req.body, null, 2));
+    console.log('🔄 Webhook received body:', JSON.stringify(req.body, null, 2));
 
     const message = req.body.message;
     
     if (message && message.text) {
-      console.log('Message text:', message.text);
+      console.log('📝 Processing message text:', message.text);
 
       // Обработка команды /reply_visitorId
       if (message.text.startsWith('/reply_')) {
@@ -34,36 +33,39 @@ export default async function handler(req, res) {
         const visitorId = parts[0].replace('/reply_', '');
         const replyText = parts.slice(1).join(' ');
 
-        console.log('Processing reply for visitor:', visitorId, 'Text:', replyText);
+        console.log('🎯 Processing reply for visitor:', visitorId, 'Text:', replyText);
         
         if (!messagesDB.has(visitorId)) {
           messagesDB.set(visitorId, []);
+          console.log('📝 Created new messages array for visitor:', visitorId);
         }
 
-        messagesDB.get(visitorId).push({
+        const newMessage = {
           id: Date.now(),
           text: replyText,
           sender: 'operator',
           timestamp: new Date().toISOString(),
           displayed: false
-        });
+        };
 
-        console.log('Reply saved for visitor:', visitorId);
+        messagesDB.get(visitorId).push(newMessage);
+        console.log('💾 Message saved:', newMessage);
+        console.log('📊 All messages for visitor:', messagesDB.get(visitorId));
         
         // Отправляем подтверждение
         await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
           chat_id: message.chat.id,
-          text: '✅ Ответ отправлен посетителю: ' + replyText
+          text: '✅ Ответ отправлен посетителю!'
         });
 
-        console.log('Confirmation sent to Telegram');
+        console.log('📤 Confirmation sent to Telegram');
       }
     }
     
     res.status(200).json({ status: 'OK', processed: true });
     
   } catch (error) {
-    console.error('Webhook error:', error);
+    console.error('❌ Webhook error:', error);
     res.status(500).json({ error: 'Webhook processing failed' });
   }
 }
